@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Papier Notepad</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    font-family: 'Georgia', serif;
+    background: #1a1a1a;
+    color: #e0e0e0;
+  }
+  #toolbar {
+    position: fixed; top:0; left:0; right:0;
+    height: 0;
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 0 20px;
+    background: #1a1a1a;
+    border-bottom: 1px solid #2a2a2a;
+    font-family: sans-serif;
+    font-size: 13px;
+    color: #666;
+    z-index: 10;
+    overflow: hidden;
+    transition: height 0.2s;
+  }
+  #toolbar.visible { height: 48px; }
+  #toolbar button {
+    background:none; border:none; color:#666; cursor:pointer;
+    font-size:13px; padding:6px 10px; border-radius:4px;
+  }
+  #toolbar button:hover { background:#2a2a2a; color:#ccc; }
+  #status { font-style: italic; }
+  #editor {
+    position: fixed;
+    top: 0; left:0;
+    width: 100vw;
+    height: 100vh;
+    border: none;
+    outline: none;
+    resize: none;
+    background: #1a1a1a;
+    padding: 60px 40px;
+    font-size: 20px;
+    line-height: 1.7;
+    color: #e0e0e0;
+    box-sizing: border-box;
+    z-index: 1;
+  }
+  @media (max-width: 700px) {
+    #editor { padding: 30px 15px; font-size: 18px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <div>📝 Papier</div>
+  <div id="status">Saved</div>
+  <div>
+    <button onclick="changeFont(-1)">A-</button>
+    <span id="fontSizeLabel" style="margin:0 4px;">20</span>
+    <button onclick="changeFont(1)">A+</button>
+    <button onclick="newNote()">New</button>
+    <button onclick="downloadNote()">Download .txt</button>
+  </div>
+</div>
+
+<div id="searchBar" style="display:none; position:fixed; top:0; left:0; right:0; z-index:20; background:#2a2a2a; padding:10px 20px; font-family:sans-serif; gap:8px; align-items:center;">
+  <input id="searchInput" type="text" placeholder="Find..." style="flex:1; padding:6px; background:#1a1a1a; color:#eee; border:1px solid #444; border-radius:4px;">
+  <button onclick="findNext()" style="background:#444;color:#eee;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;">Find Next</button>
+  <span id="searchCount" style="color:#999; font-size:12px;"></span>
+  <button onclick="closeSearch()" style="background:none;color:#999;border:none;cursor:pointer;">✕</button>
+</div>
+
+<textarea id="editor" placeholder="Start typing..." autofocus></textarea>
+
+<script>
+  const editor = document.getElementById('editor');
+  const status = document.getElementById('status');
+  const KEY = 'papier_note';
+
+  // Load saved note
+  editor.value = localStorage.getItem(KEY) || '';
+
+  let timeout;
+  editor.addEventListener('input', () => {
+    status.textContent = 'Saving...';
+    clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      localStorage.setItem(KEY, editor.value);
+      status.textContent = 'Saved';
+    }, 400);
+  });
+
+  function newNote() {
+    if (editor.value.trim() && !confirm('Clear current note?')) return;
+    editor.value = '';
+    localStorage.setItem(KEY, '');
+    editor.focus();
+  }
+
+  function downloadNote() {
+    const blob = new Blob([editor.value], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'note.txt';
+    a.click();
+  }
+
+  // Font size control
+  let fontSize = parseInt(localStorage.getItem('papier_fontsize')) || 20;
+  function applyFont() {
+    editor.style.fontSize = fontSize + 'px';
+    document.getElementById('fontSizeLabel').textContent = fontSize;
+    localStorage.setItem('papier_fontsize', fontSize);
+  }
+  function changeFont(delta) {
+    fontSize = Math.max(10, Math.min(60, fontSize + delta));
+    applyFont();
+  }
+  applyFont();
+
+  // Search (Ctrl+F)
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key.toLowerCase() === 'f') {
+      e.preventDefault();
+      const bar = document.getElementById('searchBar');
+      bar.style.display = 'flex';
+      document.getElementById('searchInput').focus();
+    }
+    if (e.key === 'Escape') closeSearch();
+  });
+
+  function closeSearch() {
+    document.getElementById('searchBar').style.display = 'none';
+    document.getElementById('searchCount').textContent = '';
+    editor.focus();
+  }
+
+  let lastIndex = -1;
+  document.getElementById('searchInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') findNext();
+  });
+
+  function findNext() {
+    const term = document.getElementById('searchInput').value;
+    if (!term) return;
+    const text = editor.value;
+    let start = lastIndex + 1;
+    let idx = text.toLowerCase().indexOf(term.toLowerCase(), start);
+    if (idx === -1) idx = text.toLowerCase().indexOf(term.toLowerCase(), 0);
+    if (idx === -1) {
+      document.getElementById('searchCount').textContent = 'Not found';
+      lastIndex = -1;
+      return;
+    }
+    editor.focus();
+    editor.setSelectionRange(idx, idx + term.length);
+    // Scroll into view roughly
+    const lineHeight = fontSize * 1.7;
+    const linesBefore = text.substring(0, idx).split('\n').length - 1;
+    editor.scrollTop = Math.max(0, linesBefore * lineHeight - editor.clientHeight / 2);
+    lastIndex = idx;
+    document.getElementById('searchCount').textContent = 'Found';
+  }
+
+  document.addEventListener('mousemove', (e) => {
+    const toolbar = document.getElementById('toolbar');
+    const searchOpen = document.getElementById('searchBar').style.display !== 'none';
+    if (e.clientY < 60 || searchOpen) toolbar.classList.add('visible');
+    else toolbar.classList.remove('visible');
+  });
+</script>
+
+</body>
+</html>
