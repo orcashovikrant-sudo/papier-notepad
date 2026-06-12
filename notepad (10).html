@@ -64,8 +64,10 @@
     <button onclick="changeFont(1)">A+</button>
     <button onclick="newNote()">New</button>
     <button onclick="downloadNote()">Download .txt</button>
+    <button id="authBtn" onclick="handleAuthClick()">Connect Drive</button>
   </div>
 </div>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 
 <div id="searchBar" style="display:none; position:fixed; top:0; left:0; right:0; z-index:20; background:#2a2a2a; padding:10px 20px; font-family:sans-serif; gap:8px; align-items:center;">
   <input id="searchInput" type="text" placeholder="Find..." style="flex:1; padding:6px; background:#1a1a1a; color:#eee; border:1px solid #444; border-radius:4px;">
@@ -171,6 +173,88 @@
     const searchOpen = document.getElementById('searchBar').style.display !== 'none';
     if (e.clientY < 60 || searchOpen) toolbar.classList.add('visible');
     else toolbar.classList.remove('visible');
+  });
+
+  // ---- Google Drive integration ----
+  const CLIENT_ID = '10200690832-9amgbmodvpuqockuervttoutbfq3s85r.apps.googleusercontent.com';
+  const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+  const FILE_NAME = 'papier-notes.txt';
+  let accessToken = null;
+  let driveFileId = localStorage.getItem('papier_drive_fileid') || null;
+  let tokenClient;
+  let driveTimeout;
+
+  function initTokenClient() {
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+      callback: (resp) => {
+        if (resp.error) { console.error(resp); return; }
+        accessToken = resp.access_token;
+        document.getElementById('authBtn').textContent = 'Drive: Connected';
+        findOrCreateFile().then(syncFromDrive);
+      }
+    });
+  }
+  window.onload = () => { if (window.google) initTokenClient(); };
+
+  function handleAuthClick() {
+    if (!tokenClient) initTokenClient();
+    tokenClient.requestAccessToken();
+  }
+
+  async function findOrCreateFile() {
+    if (driveFileId) return driveFileId;
+    // search for existing file
+    const q = encodeURIComponent(`name='${FILE_NAME}' and trashed=false`);
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive`, {
+      headers: { Authorization: 'Bearer ' + accessToken }
+    });
+    const data = await res.json();
+    if (data.files && data.files.length > 0) {
+      driveFileId = data.files[0].id;
+    } else {
+      // create new file
+      const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: FILE_NAME })
+      });
+      const created = await createRes.json();
+      driveFileId = created.id;
+    }
+    localStorage.setItem('papier_drive_fileid', driveFileId);
+    return driveFileId;
+  }
+
+  async function syncFromDrive() {
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`, {
+      headers: { Authorization: 'Bearer ' + accessToken }
+    });
+    if (res.ok) {
+      const text = await res.text();
+      if (text.trim()) {
+        editor.value = text;
+        localStorage.setItem(KEY, text);
+      }
+    }
+  }
+
+  async function saveToDrive() {
+    if (!accessToken || !driveFileId) return;
+    status.textContent = 'Syncing to Drive...';
+    const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'text/plain' },
+      body: editor.value
+    });
+    status.textContent = res.ok ? 'Saved to Drive' : 'Drive sync failed';
+  }
+
+  // Hook into existing input listener for Drive sync
+  editor.addEventListener('input', () => {
+    clearTimeout(driveTimeout);
+    driveTimeout = setTimeout(saveToDrive, 1500);
   });
 </script>
 
